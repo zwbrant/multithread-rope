@@ -10,74 +10,129 @@ using Unity.Mathematics;
 public class thingy2 : MonoBehaviour
 {
     public float Gravity = -1f;
+    public float GroundHeight = 0f;
+    public List<VerletVertex> Points;
     public List<GameObject> PointGOs;
-    public NativeList<Point> Points;
+    public List<float> Beams;
 
-
+    private JobHandle _verletHandle;
+    private JobHandle _beamsHandle;
 
     void Start()
     {
         // print("Start2");
-        Points = new NativeList<Point>(Allocator.Persistent);
-        Points.Add(new Point() { OldPos = new float3(0, 5, 0), Pos = new float3(0, 5, 0) });
 
     }
+
+    private NativeArray<float> _nBeams;
+    private NativeArray<VerletVertex> _nPoints;
+
 
     void Update()
     {
+        // creating new NArray every frame from the inspector list
+        _nBeams = new NativeArray<float>(Beams.ToArray(), Allocator.TempJob);
+        _nPoints = new NativeArray<VerletVertex>(Points.ToArray(), Allocator.TempJob);
 
-        var job = new VerletJob() {
+        var job1 = new BeamsJob()
+        {
+            Points = _nPoints,
+            Beams = _nBeams,
             DeltaTime = Time.deltaTime,
-            Points = Points,
             Gravity = Gravity
         };
 
-        var handle = job.Schedule(Points.Length, 1);
+        //var job2 = new VerletJob()
+        //{
+        //    Points = _nPoints,
+        //    DeltaTime = Time.deltaTime,
+        //    Gravity = Gravity
+        //};
 
-        handle.Complete();
 
-        // transform GOs based on new points
-        for (int i = 0; i < PointGOs.Count; i++)
+        _beamsHandle = job1.Schedule(_nBeams.Length, 1);
+        //erletHandle = job2.Schedule(_nPoints.Length, 1, _beamsHandle);
+
+
+
+
+
+    }
+
+    public void LateUpdate()
+    {
+        _verletHandle.Complete();
+
+
+        for (int i = 0; i < Points.Count; i++)
         {
-            if (Points.Length <= i)
+            if (PointGOs.Count <= i)
                 break;
 
-            PointGOs[i].transform.position = Points[i].Pos;
+            // set 3D point position
+            PointGOs[i].transform.position = _nPoints[i].Pos;
+            // update non-native point list
+            Points[i] = _nPoints[i];
         }
 
+        _nBeams.Dispose();
+        _nPoints.Dispose();
+    }
 
+
+    public void CompleteVerletJob()
+    {
+
+    }
+
+    public void CompleteBeamsJob()
+    {
+        _beamsHandle.Complete();
+    }
+
+    public void OnDestroy()
+    {
+        try
+        {
+
+        } catch{}
     }
 }
 
 
-// all the data needed to represent a Verlet point/particle 
-public struct Point
-{
-    public float3 Pos;
-    public float3 OldPos;
-}
 
-public struct VerletJob : IJobParallelFor
+
+public struct BeamsJob : IJobParallelFor
 {
-    public NativeArray<Point> Points;
+    [ReadOnly]
+    public NativeArray<float> Beams;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<VerletVertex> Points;
     public float Gravity;
     public float DeltaTime;
 
     public void Execute(int i)
     {
-        UpdateVerlet(i);
+        //if (i >= Points.Length - 1)
+        //    return;
+
+        //var p1 = Points[i];
+        //var p2 = Points[i + 1];
+
+        //float3 deltaVect = p2.Pos - p1.Pos;
+        //float deltaLength = length(deltaVect);
+
+        //float diff = deltaLength - Beams[i];
+
+        //deltaVect = normalize(deltaVect);
+
+        //p1.Pos += deltaVect * (diff * .5f);
+        //p2.Pos -= deltaVect * (diff * .5f);
+
+        //// re-asign Points
+        //Points[i] = p1;
+        //Points[i + 1] = p2;
     }
 
-    public void UpdateVerlet(int i)
-    {
-        var point = Points[i];
-      
-        float3 velocity = point.Pos - point.OldPos;
-        velocity.y += Gravity;
 
-        point.OldPos = point.Pos;
-        point.Pos = point.Pos + velocity;
-
-        Points[i] = point;
-    }
 }
