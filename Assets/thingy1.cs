@@ -11,7 +11,6 @@ public class thingy1 : MonoBehaviour
     public List<GameObject> Cubes;
 
     NativeArray<float> CubeHeights;
-    NativeList<float> salmon;
 
     JobHandle longHandle;
 
