@@ -1,4 +1,5 @@
 ﻿using RoboRyanTron.Unite2017.Variables;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using Unity.Collections;
@@ -10,8 +11,10 @@ using Vec3 = UnityEngine.Vector3;
 [System.Serializable]
 public struct VerletAttatchment
 {
+    public Vector2Int Coord;
+
     public Transform Transform;
-    public int VertexIndex;
+    public Rigidbody Rbody;
 }
 
 // all the data needed to represent a Verlet point/particle 
@@ -37,6 +40,7 @@ public struct VerletJob : IJobParallelFor
     public float GroundHeight;
     public float Gravity;
     public float DeltaTime;
+    public float Dampening;
 
     public void Execute(int i)
     {
@@ -49,13 +53,15 @@ public struct VerletJob : IJobParallelFor
         if (point.Type != VertexType.Verlet)
             return;
 
+        float dampenFactor = 1f - Dampening;
+
         Vec3 velocity = point.Pos - point.OldPos;
 
         // add gravity
         velocity.y += Gravity;
 
         // scale to frametime
-        velocity = velocity * Mathf.Pow(DeltaTime, 2);
+        velocity = velocity * DeltaTime * dampenFactor;
 
         // apply velocity to current position
         point.OldPos = point.Pos;
@@ -73,55 +79,84 @@ public struct VerletJob : IJobParallelFor
 public struct ApplyConstraints : IJobParallelFor
 {
     [ReadOnly]
-    public NativeArray<Vec3> constraintVerts;
+    public NativeArray<Vec3> HorzConstraints;
     [ReadOnly]
-    public NativeArray<VerletVertex> verticesRO;
-    public NativeArray<VerletVertex> vertices;
+    public NativeArray<Vec3> VertConstraints;
+    [ReadOnly]
+    public NativeArray<VerletVertex> VerticesRO;
+    public NativeArray<VerletVertex> Vertices;
+
+    public int Width;
+    public int Height;
 
     public void Execute(int i)
     {
-        VerletVertex vertex = vertices[i];
+        VerletVertex vertex = Vertices[i];
+        // to describe this vertex's movement, we build a vector
+        // by adding each of its adjacent constraint deltas together
         Vec3 changeVect = Vec3.zero;
 
-        // add vert from last segment
-        if (i != 0 && vertex.Type != VertexType.Transform)
+        int row = i / (Width + 1);
+        int col = i % (Width + 1);
+
+        // if this is a transform, we're not moving it
+        if (vertex.Type == VertexType.Transform)
+            return;
+
+        // is there a vert to LEFT?
+        if (col > 0)
         {
-            var lastVert = verticesRO[i - 1];
-            // change this vert in proportion to the next one's mass
-            switch (lastVert.Type)
-            {
-                case VertexType.Rbody:
-                    // not implemented
-                    break;
-                case VertexType.Transform:
-                    changeVect -= constraintVerts[i - 1];
-                    break;
-                default:
-                    changeVect -= constraintVerts[i - 1] / 2;
-                    break;
-            }
+            var leftVert = VerticesRO[i - 1];
+            // constraint index
+            int conIndex = i - (row + 1);
+
+            if (leftVert.Type != VertexType.Transform)
+                changeVect -= HorzConstraints[conIndex] / 2;
+            else
+                changeVect -= HorzConstraints[conIndex];
         }
-        // add vert from next segment
-        if (i != vertices.Length - 1 && vertex.Type != VertexType.Transform)
+
+        // is there a vert to RIGHT?
+        if (col < Width)
         {
-            var nextVert = verticesRO[i + 1];
-            // change this vert in proportion to the next one's mass
-            switch (nextVert.Type)
-            {
-                case VertexType.Rbody:
-                    // not implemented
-                    break;
-                case VertexType.Transform:
-                    changeVect += constraintVerts[i];
-                    break;
-                default:
-                    changeVect += constraintVerts[i] / 2;
-                    break;
-            }
+            var rightVert = VerticesRO[i + 1];
+            // constraint index
+            int conIndex = i - row;
+
+            if (rightVert.Type != VertexType.Transform)
+                changeVect += HorzConstraints[conIndex] / 2;
+            else
+                changeVect += HorzConstraints[conIndex];
+        }
+
+        // is there a vert to TOP?
+        if (row > 0)
+        {
+            var topVert = VerticesRO[i - (Width + 1)];
+            // constraint index
+            int conIndex = i - (Width + 1);
+
+            if (topVert.Type != VertexType.Transform)
+                changeVect -= VertConstraints[conIndex] / 2;
+            else
+                changeVect -= VertConstraints[conIndex];
+        }
+
+        // is there a vert to BOTTOM?
+        if (row < Height)
+        {
+            var bottomVert = VerticesRO[i + (Width + 1)];
+            // constraint index
+            int conIndex = i;
+
+            if (bottomVert.Type != VertexType.Transform)
+                changeVect += VertConstraints[conIndex] / 2;
+            else
+                changeVect += VertConstraints[conIndex];
         }
 
         vertex.Pos += changeVect;
-        vertices[i] = vertex;
+        Vertices[i] = vertex;
     }
 }
 
@@ -130,24 +165,50 @@ public struct ApplyConstraints : IJobParallelFor
 public struct CalculateConstraints : IJobParallelFor
 {
     [ReadOnly]
-    public NativeArray<VerletVertex> vertices;
-    public NativeArray<Vec3> constraintVerts;
+    public NativeArray<VerletVertex> Vertices;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<Vec3> HorzConstraints;
+    [NativeDisableParallelForRestriction]
 
-    public float constraintLength;
+    public NativeArray<Vec3> VertConstraints;
+
+    public int Width;
+    public int Height;
+    public float ConstraintLength;
+
 
     public void Execute(int i)
     {
-        if (i == vertices.Length - 1)
-            return;
+        int row = i / (Width + 1);
+        int col = i % (Width + 1);
 
-        Vec3 vDiff = vertices[i + 1].Pos - vertices[i].Pos;
+        // calculate RIGHT constraint
+        if (col < Width)
+        {
+            Vec3 vRightDiff = Vertices[i + 1].Pos - Vertices[i].Pos;
+            float rightDiffFactor =
+                (vRightDiff.magnitude - ConstraintLength) / vRightDiff.magnitude;
 
-        float diffFactor = (vDiff.magnitude - constraintLength) / vDiff.magnitude;
+            int index = i - row;
 
-        if (diffFactor <= 0)
-            constraintVerts[i] = Vec3.zero;
-        else
-            constraintVerts[i] = diffFactor * vDiff;
 
+                HorzConstraints[index] = (rightDiffFactor <= 0) ?
+    Vec3.zero : rightDiffFactor * vRightDiff;
+
+
+        }
+
+        // calculate BOTTOM constraint
+        if (row < Height)
+        {
+            Vec3 vBottomDiff = Vertices[i + (Width + 1)].Pos - Vertices[i].Pos;
+            float bottomDiffFactor =
+                (vBottomDiff.magnitude - ConstraintLength) / vBottomDiff.magnitude;
+
+            int index = i;
+
+            VertConstraints[index] = (bottomDiffFactor <= 0) ?
+                Vec3.zero : bottomDiffFactor * vBottomDiff;
+        }
     }
 }
