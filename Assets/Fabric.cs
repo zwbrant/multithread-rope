@@ -20,28 +20,27 @@ public class Fabric : MonoBehaviour
     }
 
     [Header("Parameters")]
-    public ForceMode RbodyForceMode;
     [Range(1, 200)]
     public int BatchSize = 24;
     [Range(1, 200)]
-    public int IterationsPerFrame = 42;
+    public int IterationsPerFrame = 16;
     public float SegmentLength;
-    [Range(0f, 1f)]
-    public float Dampening = 0f;
+    [Range(0f, 100f)]
+    public float MaxVelocity = 1000f;
     [Range(1, 100)]
     public int Width;
     [Range(0, 100)]
     public int Height = 0;
     public List<VerletAttatchment> Attatchments;
-    public float Gravity = -9f;
-    public float GroundHeight = 0f;
+    public Vec3 Gravity = new Vec3(0, -3f, 0);
+    public float GroundHeight = -1000f;
 
-    [Header("References")]
-    public GameObject VerletPointPF;
-    public List<GameObject> PointGOs;
-    public LineRenderer LineRenderer;
+    [Header("Experimental")] 
+    public float VerletFactor = 1f;
+    public float RbodyForceFactor = 1f;
+    public ForceMode RbodyForceMode;
 
-    private NativeArray<VerletVertex> _nVertices;
+    public NativeArray<VerletVertex> _nVertices;
     private NativeArray<VerletVertex> _nVerticesRO;
     // segments constraints, vertical / horizontal
     private NativeArray<Vec3> _nHorzConstraints;
@@ -86,7 +85,8 @@ public class Fabric : MonoBehaviour
             GroundHeight = GroundHeight,
             Gravity = Gravity,
             DeltaTime = Time.deltaTime,
-            Dampening = Dampening
+            VerletFactor = VerletFactor,
+            MaxVelocity = MaxVelocity
         };
 
         var findConstraints = new CalculateConstraints()

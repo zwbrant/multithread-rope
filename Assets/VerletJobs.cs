@@ -38,9 +38,10 @@ public struct VerletJob : IJobParallelFor
 {
     public NativeArray<VerletVertex> Vertices;
     public float GroundHeight;
-    public float Gravity;
+    public Vec3 Gravity;
     public float DeltaTime;
-    public float Dampening;
+    public float VerletFactor;
+    public float MaxVelocity;
 
     public void Execute(int i)
     {
@@ -53,19 +54,20 @@ public struct VerletJob : IJobParallelFor
         if (point.Type != VertexType.Verlet)
             return;
 
-        float dampenFactor = 1f - Dampening;
+        Vec3 velocity = (point.Pos - point.OldPos) * VerletFactor;
 
-        Vec3 velocity = point.Pos - point.OldPos;
+        if (velocity.magnitude > MaxVelocity)
+            velocity = velocity * (MaxVelocity / velocity.magnitude);
 
         // add gravity
-        velocity.y += Gravity;
+        //velocity.y += Gravity;
 
         // scale to frametime
-        velocity = velocity * DeltaTime * dampenFactor;
+        //velocity = velocity * Mathf.Pow(DeltaTime, 2);
 
         // apply velocity to current position
         point.OldPos = point.Pos;
-        point.Pos = point.Pos + velocity;
+        point.Pos += (velocity + Gravity) * Mathf.Pow(DeltaTime, 2);
 
         // force point to stay above ground
         if (point.Pos.y < GroundHeight)
@@ -88,6 +90,7 @@ public struct ApplyConstraints : IJobParallelFor
 
     public int Width;
     public int Height;
+    public float MaxMovement;
 
     public void Execute(int i)
     {
@@ -109,11 +112,14 @@ public struct ApplyConstraints : IJobParallelFor
             var leftVert = VerticesRO[i - 1];
             // constraint index
             int conIndex = i - (row + 1);
+            Vec3 constraint = HorzConstraints[conIndex];
+
+
 
             if (leftVert.Type != VertexType.Transform)
-                changeVect -= HorzConstraints[conIndex] / 2;
+                changeVect -= constraint / 2;
             else
-                changeVect -= HorzConstraints[conIndex];
+                changeVect -= constraint;
         }
 
         // is there a vert to RIGHT?
@@ -122,11 +128,12 @@ public struct ApplyConstraints : IJobParallelFor
             var rightVert = VerticesRO[i + 1];
             // constraint index
             int conIndex = i - row;
+            Vec3 constraint = HorzConstraints[conIndex];
 
             if (rightVert.Type != VertexType.Transform)
-                changeVect += HorzConstraints[conIndex] / 2;
+                changeVect += constraint / 2;
             else
-                changeVect += HorzConstraints[conIndex];
+                changeVect += constraint;
         }
 
         // is there a vert to TOP?
@@ -135,11 +142,12 @@ public struct ApplyConstraints : IJobParallelFor
             var topVert = VerticesRO[i - (Width + 1)];
             // constraint index
             int conIndex = i - (Width + 1);
+            Vec3 constraint = VertConstraints[conIndex];
 
             if (topVert.Type != VertexType.Transform)
-                changeVect -= VertConstraints[conIndex] / 2;
+                changeVect -= constraint / 2;
             else
-                changeVect -= VertConstraints[conIndex];
+                changeVect -= constraint;
         }
 
         // is there a vert to BOTTOM?
@@ -148,11 +156,12 @@ public struct ApplyConstraints : IJobParallelFor
             var bottomVert = VerticesRO[i + (Width + 1)];
             // constraint index
             int conIndex = i;
+            Vec3 constraint = VertConstraints[conIndex];
 
             if (bottomVert.Type != VertexType.Transform)
-                changeVect += VertConstraints[conIndex] / 2;
+                changeVect += constraint / 2;
             else
-                changeVect += VertConstraints[conIndex];
+                changeVect += constraint;
         }
 
         vertex.Pos += changeVect;
